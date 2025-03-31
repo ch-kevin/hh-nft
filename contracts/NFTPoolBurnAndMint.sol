@@ -59,7 +59,7 @@ contract NFTPoolBurnAndMint is CCIPReceiver, OwnerIsCreator {
         wnft = WrappedMyToken(wnftAddress);
     }
 
-    function burnAndsentNFT(
+    function burnAndMint(
         uint256 tokenId,
         address newOwern,
         uint64 chainSelector,

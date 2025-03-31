@@ -10,6 +10,7 @@ import "hardhat-gas-reporter";
 
 
 const SEPOLIA_URL: string = process.env.SEPOLIA_URL as string;
+const AMOY_URL: string = process.env.AMOY_URL as string;
 const PRIVITE_KEY1: string = process.env.PRIVITE_KEY1 as string;
 const PRIVITE_KEY2: string = process.env.PRIVITE_KEY2 as string;
 const ETHERSCAN_KEYS: string = process.env.ETHERSCAN_KEYS as string;
@@ -24,7 +25,14 @@ const config: HardhatUserConfig = {
     sepolia: {
       url: SEPOLIA_URL,
       accounts: [PRIVITE_KEY1, PRIVITE_KEY2],
-      chainId: 11155111
+      chainId: 11155111,
+      allowBlocksWithSameTimestamp: true
+    },
+    amoy: {
+      url: AMOY_URL,
+      accounts: [PRIVITE_KEY1, PRIVITE_KEY2],
+      chainId: 80002,
+      allowBlocksWithSameTimestamp: true
     }
   },
   etherscan: {
@@ -48,7 +56,7 @@ const config: HardhatUserConfig = {
     },
   },
   gasReporter: {
-    enabled: true
+    enabled: false
   }
 };
 

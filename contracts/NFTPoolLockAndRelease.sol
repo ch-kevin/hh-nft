@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.24;
+pragma solidity ^0.8.19;
 
 import {IRouterClient} from "@chainlink/contracts-ccip/src/v0.8/ccip/interfaces/IRouterClient.sol";
 import {OwnerIsCreator} from "@chainlink/contracts-ccip/src/v0.8/shared/access/OwnerIsCreator.sol";
@@ -19,13 +19,11 @@ import {MyToken} from "./MyToken.sol";
 /// @title - A simple messenger contract for sending/receiving string data across chains.
 contract NFTPoolLockAndRelease is CCIPReceiver, OwnerIsCreator {
     using SafeERC20 for IERC20;
-    MyToken nft;
 
     // Custom errors to provide more descriptive revert messages.
     error NotEnoughBalance(uint256 currentBalance, uint256 calculatedFees); // Used to make sure contract has enough balance.
     error NothingToWithdraw(); // Used when trying to withdraw Ether but there's nothing to withdraw.
     error FailedToWithdrawEth(address owner, address target, uint256 value); // Used when the withdrawal of Ether fails.
-    error InvalidReceiverAddress(); // Used when the receiver address is 0.
 
     // Event emitted when a message is sent to another chain.
     event MessageSent(
@@ -38,40 +36,84 @@ contract NFTPoolLockAndRelease is CCIPReceiver, OwnerIsCreator {
     );
 
     // Event emitted when a message is received from another chain.
-    event MessageReceivedTokenUnlocked(
-        address indexed newOwner,
-        uint256 indexed tokenId
+    event TokenUnlocked(
+        uint256 tokenId,
+        address newOwner
     );
 
     bytes32 private s_lastReceivedMessageId; // Store the last received messageId.
     string private s_lastReceivedText; // Store the last received text.
 
-    IERC20 private s_linkToken;
+    // Mapping to keep track of allowlisted destination chains.
+    mapping(uint64 => bool) public allowlistedDestinationChains;
 
-    struct RequestData {
-        address newOwner;
+    // Mapping to keep track of allowlisted source chains.
+    mapping(uint64 => bool) public allowlistedSourceChains;
+
+    // Mapping to keep track of allowlisted senders.
+    mapping(address => bool) public allowlistedSenders;
+
+    IERC20 private s_linkToken;
+    
+    // remember to add visibility for the variable 
+    MyToken public nft;
+    
+    struct RequestData{
         uint256 tokenId;
+        address newOwner;
     }
+
+    // remember to add visibility for the variable
+    mapping(uint256 => bool) public tokenLocked;
+
 
     /// @notice Constructor initializes the contract with the router address.
     /// @param _router The address of the router contract.
     /// @param _link The address of the link contract.
-    constructor(address _router, address _link,address nftAddress) CCIPReceiver(_router) {
+    constructor(address _router, address _link, address nftAddr) CCIPReceiver(_router) {
         s_linkToken = IERC20(_link);
-        nft = MyToken(nftAddress);
+        nft = MyToken(nftAddr);
     }
 
-    function lockAndsentNFT(
+    /// @dev Updates the allowlist status of a destination chain for transactions.
+    function allowlistDestinationChain(
+        uint64 _destinationChainSelector,
+        bool allowed
+    ) external onlyOwner {
+        allowlistedDestinationChains[_destinationChainSelector] = allowed;
+    }
+
+    /// @dev Updates the allowlist status of a source chain for transactions.
+    function allowlistSourceChain(
+        uint64 _sourceChainSelector,
+        bool allowed
+    ) external onlyOwner {
+        allowlistedSourceChains[_sourceChainSelector] = allowed;
+    }
+
+    /// @dev Updates the allowlist status of a sender for transactions.
+    function allowlistSender(address _sender, bool allowed) external onlyOwner {
+        allowlistedSenders[_sender] = allowed;
+    }
+
+    // lock NFT and send CCIP transaction
+    function lockAndSendNFT(
         uint256 tokenId,
-        address newOwern,
-        uint64 chainSelector,
-        address recevier
-        ) public returns(bytes32)
-    {
-        nft.transferFrom(msg.sender,address(this),tokenId);
-        // sent data
-        bytes memory palload = abi.encode(tokenId,newOwern);
-        bytes32 messageId = sendMessagePayLINK(chainSelector, recevier, palload);
+        address newOwner,
+        uint64 destChainSelector,
+        address destReceiver
+    ) public returns (bytes32){
+        // verify if the transaction is sent by owner
+        // comment this because the check is already performed by ERC721
+        // require(nft.ownerOf(tokenId) == msg.sender, "you are not the owner of the NFT");
+
+        // tansfer the NFT from owner to the pool
+        nft.transferFrom(msg.sender, address(this), tokenId);
+        // send request to Chainlink CCIP to send the NFT to the other Chain
+        bytes memory payload = abi.encode(tokenId, newOwner);
+
+        bytes32 messageId = sendMessagePayLINK(destChainSelector, destReceiver, payload);
+        tokenLocked[tokenId] = true;
         return messageId;
     }
 
@@ -80,14 +122,12 @@ contract NFTPoolLockAndRelease is CCIPReceiver, OwnerIsCreator {
     /// @dev Assumes your contract has sufficient LINK.
     /// @param _destinationChainSelector The identifier (aka selector) for the destination blockchain.
     /// @param _receiver The address of the recipient on the destination blockchain.
-    /// @param _text The text to be sent.
+    /// @param _payload The data to be sent.
     /// @return messageId The ID of the CCIP message that was sent.
-
-
     function sendMessagePayLINK(
         uint64 _destinationChainSelector,
         address _receiver,
-        bytes memory _text
+        bytes memory _payload
     )
         internal
         returns (bytes32 messageId)
@@ -95,7 +135,7 @@ contract NFTPoolLockAndRelease is CCIPReceiver, OwnerIsCreator {
         // Create an EVM2AnyMessage struct in memory with necessary information for sending a cross-chain message
         Client.EVM2AnyMessage memory evm2AnyMessage = _buildCCIPMessage(
             _receiver,
-            _text,
+            _payload,
             address(s_linkToken)
         );
 
@@ -119,7 +159,7 @@ contract NFTPoolLockAndRelease is CCIPReceiver, OwnerIsCreator {
             messageId,
             _destinationChainSelector,
             _receiver,
-            _text,
+            _payload,
             address(s_linkToken),
             fees
         );
@@ -135,43 +175,43 @@ contract NFTPoolLockAndRelease is CCIPReceiver, OwnerIsCreator {
         internal
         override
     {
-
-         // 接受数据；
-        RequestData memory rd = abi.decode(any2EvmMessage.data,(RequestData));
-        uint256 tokenId = rd.tokenId;
-        address newOwner = rd.newOwner;
-
-        nft.transferFrom(address(this),newOwner,tokenId);
-
-        emit MessageReceivedTokenUnlocked(newOwner,tokenId);
+        s_lastReceivedMessageId = any2EvmMessage.messageId; // fetch the messageId
+        RequestData memory requestData = abi.decode(any2EvmMessage.data, (RequestData));
+        uint256 tokenId = requestData.tokenId;
+        address newOwner = requestData.newOwner;
+        require(tokenLocked[tokenId], "the NFT is not locked");
+        nft.transferFrom(address(this), newOwner, tokenId);
+        emit TokenUnlocked(tokenId, newOwner);
     }
 
     /// @notice Construct a CCIP message.
     /// @dev This function will create an EVM2AnyMessage struct with all the necessary information for sending a text.
     /// @param _receiver The address of the receiver.
-    /// @param _text The bytes data to be sent.
+    /// @param _payload The string data to be sent.
     /// @param _feeTokenAddress The address of the token used for fees. Set address(0) for native gas.
     /// @return Client.EVM2AnyMessage Returns an EVM2AnyMessage struct which contains information for sending a CCIP message.
     function _buildCCIPMessage(
         address _receiver,
-        bytes memory _text,
+        bytes memory _payload,
         address _feeTokenAddress
     ) private pure returns (Client.EVM2AnyMessage memory) {
         // Create an EVM2AnyMessage struct in memory with necessary information for sending a cross-chain message
+
+        /*
+            bytes receiver; // abi.encode(receiver address) for dest EVM chains
+            bytes data; // Data payload
+            EVMTokenAmount[] tokenAmounts; // Token transfers
+            address feeToken; // Address of feeToken. address(0) means you will send msg.value.
+            bytes extraArgs; // Populate this with _argsToBytes(EVMExtraArgsV2)
+        */
         return
             Client.EVM2AnyMessage({
                 receiver: abi.encode(_receiver), // ABI-encoded receiver address
-                data: abi.encode(_text), // ABI-encoded string
-                tokenAmounts: new Client.EVMTokenAmount[](0), // Empty array as no tokens are transferred
+                data: _payload, // ABI-encoded string
+                tokenAmounts: new Client.EVMTokenAmount[](0), // Empty array aas no tokens are transferred
                 extraArgs: Client._argsToBytes(
-                    // Additional arguments, setting gas limit and allowing out-of-order execution.
-                    // Best Practice: For simplicity, the values are hardcoded. It is advisable to use a more dynamic approach
-                    // where you set the extra arguments off-chain. This allows adaptation depending on the lanes, messages,
-                    // and ensures compatibility with future CCIP upgrades. Read more about it here: https://docs.chain.link/ccip/best-practices#using-extraargs
-                    Client.EVMExtraArgsV2({
-                        gasLimit: 200_000, // Gas limit for the callback on the destination chain
-                        allowOutOfOrderExecution: true // Allows the message to be executed out of order relative to other messages from the same sender
-                    })
+                    // Additional arguments, setting gas limit
+                    Client.EVMExtraArgsV1({gasLimit: 200_000})
                 ),
                 // Set the feeToken to a feeTokenAddress, indicating specific asset will be used for fees
                 feeToken: _feeTokenAddress
