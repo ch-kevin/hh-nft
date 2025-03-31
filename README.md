@@ -10,4 +10,13 @@ npx hardhat test
 REPORT_GAS=true npx hardhat test
 npx hardhat node
 npx hardhat ignition deploy ./ignition/modules/Lock.ts
+
+
+echo "# hh-nft" >> README.md
+git init
+git add README.md
+git commit -m "first commit"
+git branch -M main
+git remote add origin https://github.com/ch-kevin/hh-nft.git
+git push -u origin main
 ```
