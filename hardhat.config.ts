@@ -8,6 +8,8 @@ import 'hardhat-deploy-ethers';
 import "dotenv/config";
 import "hardhat-gas-reporter";
 
+import "./task/index";
+
 
 const SEPOLIA_URL: string = process.env.SEPOLIA_URL as string;
 const AMOY_URL: string = process.env.AMOY_URL as string;
@@ -26,13 +28,19 @@ const config: HardhatUserConfig = {
       url: SEPOLIA_URL,
       accounts: [PRIVITE_KEY1, PRIVITE_KEY2],
       chainId: 11155111,
-      allowBlocksWithSameTimestamp: true
+      allowBlocksWithSameTimestamp: true,
+      companionNetworks:{
+        destChain: "amoy"
+      }
     },
     amoy: {
       url: AMOY_URL,
       accounts: [PRIVITE_KEY1, PRIVITE_KEY2],
       chainId: 80002,
-      allowBlocksWithSameTimestamp: true
+      allowBlocksWithSameTimestamp: true,
+      companionNetworks:{
+        destChain: "sepolia"
+      }
     }
   },
   etherscan: {
